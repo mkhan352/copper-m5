@@ -32,6 +32,11 @@ export function startTracing(): boolean {
   if (processor) return true;
   if (!isTracingConfigured()) return false;
   processor = new LangfuseSpanProcessor({
+    // A pasted value may carry quotes, spaces or a trailing slash.
+    baseUrl: process.env
+      .LANGFUSE_BASE_URL!.trim()
+      .replace(/^["']|["']$/g, "")
+      .replace(/\/+$/, ""),
     // Serverless functions (Vercel) can freeze right after replying, so send
     // each span straight away there; locally, batch them.
     exportMode: process.env.VERCEL ? "immediate" : "batched",
