@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { embedMany, generateText, Output, streamText } from "ai";
 import type { z } from "zod";
@@ -60,10 +61,39 @@ export type AiCallRow = {
   created_at: string;
 };
 
+/**
+ * Module 5: AI_MAX_RPM spaces requests out so a burst (the golden-set eval)
+ * stays under Gemini's free limit of 15 requests a minute. Unset: no limit.
+ */
+let nextSlot = 0;
+
+/**
+ * Time spent waiting for AI_MAX_RPM, so the eval can leave it out of an
+ * answer's speed: `pacingWait.run({ ms: 0 }, ...)` and read `ms` after.
+ */
+export const pacingWait = new AsyncLocalStorage<{ ms: number }>();
+
+async function waitForSlot() {
+  const rpm = Number(process.env.AI_MAX_RPM);
+  if (!(rpm > 0)) return;
+  const now = Date.now();
+  const slot = Math.max(now, nextSlot);
+  nextSlot = slot + Math.ceil(60_000 / rpm);
+  if (slot <= now) return;
+  const store = pacingWait.getStore();
+  if (store) store.ms += slot - now;
+  await new Promise((r) => setTimeout(r, slot - now));
+}
+
+const pacedFetch: typeof fetch = async (input, init) => {
+  await waitForSlot();
+  return fetch(input, init);
+};
+
 function google() {
   const googleKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim();
   if (!googleKey) throw new AiNotConfiguredError();
-  return createGoogleGenerativeAI({ apiKey: googleKey });
+  return createGoogleGenerativeAI({ apiKey: googleKey, fetch: pacedFetch });
 }
 
 function languageModel(model: ModelId) {

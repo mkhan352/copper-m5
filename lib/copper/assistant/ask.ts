@@ -12,14 +12,21 @@
 // Module 5: each turn is one Langfuse trace ("ask-copper-turn"), with one
 // "agent" observation per agent that spoke, and its model calls and tool
 // calls inside it.
-import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
+import {
+  getActiveTraceId,
+  propagateAttributes,
+  startActiveObservation,
+} from "@langfuse/tracing";
 import { hasToolCall, stepCountIs } from "ai";
 import { callStream, THOUGHT_SUMMARIES } from "@/lib/ai/call";
 import { createLive, type Live } from "@/lib/ai/live";
+import { defaultModel } from "@/lib/ai/models";
+import { costUsd } from "@/lib/ai/pricing";
 import {
   COPPER_HANDOFF,
   COPPER_INSTRUCTIONS,
   REFUND_AGENT_INSTRUCTIONS,
+  SINGLE_AGENT_INSTRUCTIONS,
 } from "@/lib/copper/assistant/instructions";
 import type {
   Agent,
@@ -29,6 +36,7 @@ import type {
 import {
   copperTools,
   refundAgentTools,
+  singleAgentTools,
   transferToRefundAgent,
 } from "@/lib/copper/assistant/tools";
 import type { Desk } from "@/lib/copper/orders";
@@ -42,9 +50,18 @@ export type AskCopperRequest = {
   desk?: Desk;
   /** Who answers first: whoever ended the last turn. Copper by default. */
   agent?: Agent;
+  /**
+   * Module 5: "multi" (default) is Copper plus the Refund agent; "single" is
+   * one support agent with every tool. The golden-set eval runs both.
+   */
+  mode?: "multi" | "single";
 };
 
-export type AskCopperResult = { progress: Live<Progress> };
+export type AskCopperResult = {
+  progress: Live<Progress>;
+  /** The turn's Langfuse trace (empty when tracing is off). */
+  traceId?: string;
+};
 
 /** At most this many model steps (tool calls plus the reply) per agent. */
 const MAX_STEPS = 5;
@@ -70,6 +87,20 @@ const AGENT_NAMES: Record<Agent, string> = {
 };
 
 const SORRY = "Sorry, something went wrong on my end. Please try again.";
+
+/** Module 5: the single support agent, with every tool and no handoffs. */
+function singleAgentCall(messages: ChatMessage[], desk: Desk) {
+  return callStream(
+    { module: 5, feature: "single-agent" },
+    {
+      messages,
+      providerOptions: THOUGHT_SUMMARIES,
+      instructions: SINGLE_AGENT_INSTRUCTIONS,
+      tools: singleAgentTools(desk),
+      stopWhen: stepCountIs(MAX_STEPS),
+    },
+  );
+}
 
 /** One agent's call: its instructions and only its own tools. */
 function agentCall(agent: Agent, messages: ChatMessage[], desk?: Desk) {
@@ -105,6 +136,7 @@ export async function askCopper({
   useTools,
   desk,
   agent = "copper",
+  mode = "multi",
 }: AskCopperRequest): Promise<AskCopperResult> {
   const { live, update, done } = createLive<Progress>();
   const first: Agent = desk && useTools ? agent : "copper";
@@ -197,6 +229,19 @@ export async function askCopper({
       }
       update(snapshot());
     }
+    const used = await result.totalUsage;
+    const usage = (progress.usage ??= {
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+    });
+    usage.inputTokens += used.inputTokens ?? 0;
+    usage.outputTokens += used.outputTokens ?? 0;
+    usage.costUsd = costUsd(
+      defaultModel(),
+      usage.inputTokens,
+      usage.outputTokens,
+    );
     return handoff;
   }
 
@@ -204,9 +249,10 @@ export async function askCopper({
   function traceAgent(
     agent: Agent,
     run: () => Promise<Agent | undefined>,
+    name = AGENT_NAMES[agent],
   ): Promise<Agent | undefined> {
     return startActiveObservation(
-      AGENT_NAMES[agent],
+      name,
       async (observation) => {
         const replyBefore = progress.reply;
         const handoff = await run();
@@ -221,6 +267,8 @@ export async function askCopper({
     );
   }
 
+  const single = mode === "single" && Boolean(desk) && useTools;
+  let traceId: string | undefined;
   const lastQuestion = messages.findLast((m) => m.role === "user")?.content;
 
   // Read the stream in the background, so the panel gets the first update now.
@@ -230,10 +278,15 @@ export async function askCopper({
       tags: [
         desk ? "support-page" : "home-page",
         useTools ? "tools" : "no-tools",
+        single ? "single-agent" : "multi-agent",
       ],
       metadata: { first_agent: first, messages: String(messages.length) },
     },
-    () => startActiveObservation("ask-copper-turn", runTurn),
+    () =>
+      startActiveObservation("ask-copper-turn", (turn) => {
+        traceId = getActiveTraceId();
+        return runTurn(turn);
+      }),
   );
 
   async function runTurn(turn: {
@@ -252,6 +305,12 @@ export async function askCopper({
               { messages, providerOptions: THOUGHT_SUMMARIES },
             ),
           ),
+        );
+      } else if (single && desk) {
+        await traceAgent(
+          "copper",
+          () => follow("copper", singleAgentCall(messages, desk)),
+          "support-agent",
         );
       } else {
         let current = first;
@@ -284,5 +343,5 @@ export async function askCopper({
     done(snapshot());
   }
 
-  return { progress: live };
+  return { progress: live, traceId };
 }
