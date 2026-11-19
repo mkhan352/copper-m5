@@ -1,8 +1,15 @@
 name: CI
 
+# Runs on every pull request, and on pushes to main (merges).
+# Branch protection on main requires these checks to pass before merging.
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -12,6 +19,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # From the repo's Actions secrets. Live-AI tests skip when it's empty.
+      GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
