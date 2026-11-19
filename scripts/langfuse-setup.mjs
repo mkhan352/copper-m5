@@ -2,9 +2,20 @@
 // Tells your Langfuse project what each course model costs (the prices in
 // lib/ai/pricing.ts), so every trace shows its cost in dollars. Safe to run
 // again: it replaces the prices it added before.
+import { registerHooks } from "node:module";
 import { LangfuseClient } from "@langfuse/client";
 
 const root = new URL("../", import.meta.url);
+// Tell Node the app's TypeScript files are ES modules, so it doesn't warn.
+registerHooks({
+  load: (url, context, next) =>
+    next(
+      url,
+      url.endsWith(".ts")
+        ? { ...context, format: "module-typescript" }
+        : context,
+    ),
+});
 try {
   process.loadEnvFile(new URL(".env.local", root));
 } catch {
