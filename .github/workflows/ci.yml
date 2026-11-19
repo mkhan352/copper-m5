@@ -33,3 +33,28 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # Module 5: the golden-set eval. An AI judge grades Ask Copper (two agents
+  # and the single agent); scores go to Langfuse and to this check's summary.
+  # Fails, and blocks the merge, when the two agents pass too few questions.
+  eval:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+      LANGFUSE_BASE_URL: ${{ secrets.LANGFUSE_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Golden-set eval (AI judge)
+        run: npm run eval
+      - name: Show the scores on the pull request
+        if: always()
+        run: node scripts/eval-report.mjs

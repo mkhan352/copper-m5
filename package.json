@@ -16,7 +16,10 @@
     "start-module": "node scripts/start-module.mjs",
     "env:check": "node scripts/check-env.mjs",
     "embed-docs": "node scripts/embed-docs.mjs",
-    "langfuse:setup": "node scripts/langfuse-setup.mjs"
+    "langfuse:setup": "node scripts/langfuse-setup.mjs",
+    "eval": "vitest run --config vitest.eval.config.mts",
+    "share-trace": "node scripts/share-trace.mjs",
+    "push-secrets": "node scripts/push-secrets.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "4.0.93",

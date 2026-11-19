@@ -35,6 +35,8 @@ export type Progress = {
   status: "working" | "done" | "error";
   /** Who wrote the reply. Copper unless set. */
   agent?: Agent;
+  /** Module 5: tokens and cost of every model call in this answer. */
+  usage?: { inputTokens: number; outputTokens: number; costUsd: number };
 };
 
 /** Every tool call in an answer, in order. */

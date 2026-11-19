@@ -197,3 +197,36 @@ tokens, cost and time. Nothing changes when the `LANGFUSE_*` keys aren't set.
 **Decisions:** Langfuse's OpenTelemetry processor rather than a Langfuse
 wrapper around each call, so the AI SDK's own spans (steps, tools, tokens)
 come through unchanged and `lib/ai/call.ts` stays the one place calls happen.
+
+## Module 5: Golden-set eval and single vs multi agent
+
+**Summary:** A golden set of 12 Support-page questions is sent to Ask Copper
+in two setups: the two agents (Copper + the Refund agent) and one support
+agent with every tool. An AI judge grades each reply; Langfuse keeps the
+scores as two runs of the `copper-golden-set` dataset. CI runs it on every
+pull request and blocks the merge when the two agents pass under 80%.
+
+**How it fits:**
+
+- `lib/copper/eval/golden-set.ts`: the questions, what a good answer does,
+  the Refund Console state for each, and hard tool checks (for example,
+  `request_refund` must return `refunded`).
+- `lib/copper/eval/judge.ts`: the AI judge, `callObject` with feature
+  `eval-judge` (score 1–5, pass at 4+), and `checkTools`.
+- `lib/copper/assistant/ask.ts`: `mode: "single"` runs `support-agent`
+  (`SINGLE_AGENT_INSTRUCTIONS`, `singleAgentTools`, feature `single-agent`).
+  Each answer now carries its tokens and cost (`progress.usage`) and returns
+  its Langfuse `traceId`.
+- `evals/golden-set.eval.ts` (`npm run eval`, config `vitest.eval.config.mts`):
+  syncs the dataset, runs `dataset.runExperiment` once per setup with
+  item scores `pass`, `judge_score`, `tool_check`, `cost_usd`, `latency_s` and
+  run scores `pass_rate`, `avg_judge_score`, `avg_cost_usd`, `avg_latency_s`,
+  then writes `.eval/results.json`.
+- `scripts/eval-report.mjs`: turns the results into the CI check's summary
+  table and annotations on the pull request.
+- `AI_MAX_RPM` (set to 14 by the eval) spaces Gemini requests in
+  `lib/ai/call.ts` to stay under the free plan's 15 a minute.
+
+**Decisions:** The pass mark needs both the judge (score 4+) and the tool
+check, so a refund reply that sounds right but never asked the app fails.
+Only the two agents gate the merge; the single agent is measured to compare.
