@@ -171,3 +171,29 @@ the tests and a golden-set evaluation with an AI judge run in GitHub Actions
 on every pull request, with `main` protected; every AI call is traced in
 Langfuse; and one support agent that does everything is compared with the two
 agents on the same golden set. Langfuse is the only eval and monitoring tool.
+
+## Module 5: Tracing in Langfuse
+
+**Summary:** Every AI call is traced in Langfuse: each agent, its tool calls,
+tokens, cost and time. Nothing changes when the `LANGFUSE_*` keys aren't set.
+
+**How it fits:**
+
+- `instrumentation.ts` runs once when the server starts and calls
+  `startTracing()` in `lib/ai/tracing.ts`. That registers an OpenTelemetry
+  tracer whose `LangfuseSpanProcessor` sends spans to Langfuse, and tells the
+  AI SDK to report each call (`registerTelemetry(new OpenTelemetry())`).
+- `lib/ai/call.ts` names every call after its feature (`telemetry.functionId`),
+  so traces read "ask-copper" or "refund-agent".
+- `lib/copper/assistant/ask.ts` wraps each chat turn in one trace,
+  `ask-copper-turn` (input: the question, output: the reply and who gave it),
+  with one `agent` observation per agent that spoke (`copper-agent`,
+  `refund-agent`). Their model steps and tool calls nest inside.
+- `npm run langfuse:setup` (once) gives Langfuse the prices in
+  `lib/ai/pricing.ts`, so each trace shows its cost.
+- Scripts call `startTracing()` themselves and `flushTracing()` before they
+  exit. On Vercel spans are sent straight away (`exportMode: "immediate"`).
+
+**Decisions:** Langfuse's OpenTelemetry processor rather than a Langfuse
+wrapper around each call, so the AI SDK's own spans (steps, tools, tokens)
+come through unchanged and `lib/ai/call.ts` stays the one place calls happen.

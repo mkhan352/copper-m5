@@ -12,7 +12,8 @@ import { costUsd } from "@/lib/ai/pricing";
 
 // Every model call in the app goes through this file, so each one is logged
 // with its tokens, cost and how long it took. The log goes to the terminal
-// running the app, as a line starting "[ai_calls]".
+// running the app, as a line starting "[ai_calls]". Module 5: each call is
+// also traced in Langfuse when its keys are set (lib/ai/tracing.ts).
 
 export class AiNotConfiguredError extends Error {
   constructor() {
@@ -29,6 +30,14 @@ export function isAiConfigured(): boolean {
 
 /** Which module and feature made the call, for the ai_calls log. */
 export type CallInfo = { module: number; feature: string; model?: ModelId };
+
+/**
+ * Names the call in Langfuse traces (Module 5) after its feature, so the
+ * trace shows "ask-copper" or "refund-agent" rather than "streamText".
+ */
+function telemetryFor(info: Pick<CallInfo, "feature">) {
+  return { functionId: info.feature };
+}
 
 // Omit that keeps generateText's "prompt or messages" union intact.
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
@@ -114,7 +123,11 @@ async function tracked<T extends { usage: Usage }>(
 /** Generates text. Example: callText({ module: 3, feature: "support-answer" }, { prompt }) */
 export async function callText(info: CallInfo, options: TextOptions) {
   return tracked(info, (model) =>
-    generateText({ ...options, model: languageModel(model) }),
+    generateText({
+      ...options,
+      model: languageModel(model),
+      telemetry: telemetryFor(info),
+    }),
   );
 }
 
@@ -129,6 +142,7 @@ export async function callObject<Schema extends z.ZodType>(
       ...rest,
       model: languageModel(model),
       output: Output.object({ schema }),
+      telemetry: telemetryFor(info),
     }),
   );
   // Spreading `rest` loses generateText's output type; Output.object has
@@ -162,6 +176,7 @@ export async function callEmbedMany(
     const result = await embedMany({
       model: google().embedding(EMBEDDING_MODEL.slice("google/".length)),
       values,
+      telemetry: telemetryFor(info),
       providerOptions: {
         google: { outputDimensionality: EMBEDDING_DIMENSIONS },
       },
@@ -190,6 +205,7 @@ export function callStream(info: CallInfo, options: StreamOptions) {
   return streamText({
     ...options,
     model: languageModel(model),
+    telemetry: telemetryFor(info),
     onFinish: ({ totalUsage }) => logCall(row(true, totalUsage)),
     onError: () => logCall(row(false)),
   });
